@@ -271,7 +271,6 @@ DiskDriver(char *arg)
   disks[unit].length = 0;
   disks[unit].current = NULL;
 
-  // Let the parent know we are running
   semvReal(semRunning);
   //Enable interrupts
   enableInterrupts();
@@ -332,7 +331,7 @@ DiskDriver(char *arg)
 	}
       }
 
-      //Handle tracks request
+      //Handle tracks request - initiate by using USLOSS_DeviceOutput
       else {
 	USLOSS_DeviceOutput(USLOSS_DISK_DEV, unit, &proc->request);
 	retVal = waitDevice(USLOSS_DISK_DEV, unit, &status);
@@ -348,9 +347,136 @@ DiskDriver(char *arg)
   }
   //Unblock parent proc
   semvReal(semRunning);
+  return 0;
 }
 
+int TermDriver(char *arg)
+{
+  int unit = atoi((char *) arg);
+  int status;
+  int retVal;
 
+  // Let the parent know we are running
+  semvReal(semRunning);
+
+  while(! isZapped()) {
+    retVal = waitDevice(USLOSS_TERM_INT, unit, &status);
+    //Check the return value
+    if(retVal != 0)
+      return 0;
+
+    //Check the receive status for a status of USLOSS_DEV_BUSY meaning a char is ready to be
+    //recieved
+    int recv = USLOSS_TERM_STAT_RECV(status);
+    if(recv == USLOSS_DEV_BUSY){
+      MboxCondSend(mboxCharRec[unit], &status, sizeof(int));
+    }
+
+    //Check the xmit status for a status of USLOSS_DEV_READY meaning a char is ready to be
+    //sent
+    int xmit = USLOSS_TERM_STAT_XMIT(status);
+    if(xmit == USLOSS_DEV_READY) {
+      MboxCondSend(mboxCharRec[unit], &status, sizeof(int));
+    }
+  }
+  return 0;
+}
+
+int TermReader(char *arg)
+{
+  int unit = atoi((char *) arg);
+  char lineRead[MAXLINE];
+  int charRec;
+  int nextIndex = 0;
+  int i;
+
+  semvReal(semRunning);
+
+  while(! isZapped()) {
+
+    //Read from the mbox
+    MboxReceive(mboxCharRec[unit], &charRec, sizeof(int));
+
+    //Use USLOSS_TERM_STAT_CHAR with charRec to get the char
+    char c = USLOSS_TERM_STAT_CHAR(charRec);
+
+    //Store in the char array for the line
+    lineRead[nextIndex] = c;
+    nextIndex++;
+
+    //Check if we have read the max amount of characters or we found a new line char
+    if(next == MAXLINE || c == '\n') {
+      //Store a null char at the end
+      lineRead[next] = '\0';
+
+      //Send the completed line to the line read mbox
+      MboxSend(mboxLineRead[unit], line, next);
+
+      //Reset variables to read another line
+      next = 0;
+      for(i = 0; i < MAXLINE; i++)
+	lineRead[i] = '\0';
+    }  
+  }
+  return 0;
+}
+
+int TermWriter(char *arg)
+{
+  int unit = atoi((char *) arg);
+  char line[MAXLINE];
+  int nextIndex;
+  int status;
+
+  semvReal(semRunning);
+
+  while(! isZapped()) {
+    //Receive from the Line Write mbox
+    int size = MboxReceive(mboxLineWrite[unit], line, MAXLINE);
+
+    //Check if the proc was zapped while trying to receive
+    if(isZapped())
+      return;
+
+    //Enable transmit interrupts
+    int num = USLOSS_TERM_CTRL_XMIT_INT(num);
+    //Receive interrupt
+    USLOSS_DeviceOutput(USLOSS_TERM_DEV, unit, (void *)((long)num));
+
+    //Transmit the line
+    for(nextIndex = 0; nextIndex < size; nextIndex++) {
+      MboxReceive(mboxCharSend[unit], &status, sizeof(int));
+
+      //Check the transmit status for a USLOSS_DEV_READY status
+      int xmit = USLOSS_TERM_STAT_XMIT(status);
+      if(xmit == USLOSS_DEV_READY) {
+	//Char to send
+	num = USLOSS_TERM_CTRL_CHAR(num, line[nextIndex]);
+
+	//Transmit the char
+	num = USLOSS_TERM_CTRL_XMIT_CHAR(num);
+
+	//Enable xmit interrupts
+	num = USLOSS_TERM_CTRL_XMIT_INT(num);
+
+	USLOSS_DeviceOutput(USLOSS_TERM_DEV, unit, (void *)((long)num));
+      }
+    }
+
+    //Reset num and enable receive interrupts
+    num = 0;
+    if(termInterrupts[unit] == 1)
+      num = USLOSS_TERM_CTRL_RECV_INT(num);
+    USLOSS_DeviceOutput(USLOSS_TERM_DEV, unit, (void *)((long)num));
+    termInterrupts[unit] = 0;
+
+    //Receive from pid mbox
+    int pid;
+    MboxReceive(mboxPIDs[unit], &pid, sizeof(int));
+    semvReal(procTable[pid%MAXPROC].blockedSem);
+  }
+  return 0;
+}
 
 
 
