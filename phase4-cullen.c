@@ -479,12 +479,264 @@ int TermWriter(char *arg)
 }
 
 
+/************ SLEEPS *************/
+/*
+ *  Routine:  sleep
+ *
+ *  Description: Extract the value needed for sleepReal()
+ *
+ *  Arguments:    USLOSS_Sysargs *sysArgs - system arguments passed to the sleep
+                  function
+ *
+ *  Return Value: void
+ *
+ */
+void sleep(USLOSS_Sysargs *sysArgs) {
+  requireKernelMode("sleep()");
+  int sec = (long) sysArgs->arg1;
+  int val = sleepReal(sec);
+  sysArgs->arg4 = (void *) ((long) val);
+  setUserMode();
+}
+
+/*
+ *  Routine:  sleepReal()
+ *
+ *  Description: Extract the value needed for sleepReal()
+ *
+ *  Arguments:    int procSeconds - number of seconds associated with the current process
+ *
+ *  Return Value: -1 if the processes time slice is < 0, 0 if successful
+ *
+ */
+
+int sleepReal(int procSeconds) {
+  requireKernelMode("sleepReal()");
+  if (procSeconds < 0) return -1;
+
+  //get the current process
+  if (ProcTable[getpid() % MAXPROC].pid == -1) {
+      //initialize ProcTable entry if the process does not exist yet
+      initProc(getpid());
+  }
+  procPtr currProc = &ProcTable[getpid() % MAXPROC];
+  
+  //set time for the current process
+  currProc->wakeTime = USLOSS_Clock() + procSeconds*1000000;
+
+  //add the current process to the sleep heap
+  heapAdd(&sleepHeap, currProc);
+
+  //block the current process
+  sempReal(currProc->blockSem);
+  return 0;
+}
+
+void diskRead(USLOSS_Sysargs * sysArgs) {
+    requireKernelMode("diskRead()");
+
+    int sectors = (long) sysArgs->arg2;
+    int track = (long) sysArgs->arg3;
+    int first = (long) sysArgs->arg4;
+    int unit = (long) sysArgs->arg5;
+
+    int val = diskReadReal(unit, track, first, sectors, sysArgs->arg1);
+
+    sysArgs->arg1 = (void *) ((long) val);
+    if (val == -1) {
+      sysArgs->arg4 = (void *) ((long) -1)
+    } else {
+      sysArgs->arg4 = (void *) ((long) 0);
+    }
+    setUserMode();
+}
+
+int diskReadReal(int unit, int track, int first, int sectors, void *buffer) {
+    requireKernelMode("diskWriteReal");
+    //pass 0 to diskReadOrWriteReal() to indicate it's a read
+    return diskReadOrWriteReal(unit, track, first, sectors, buffer, 0);
+}
+
+
+/* extract values from sysargs and call diskWriteReal */
+void diskWrite(USLOSS_Sysargs * sysArgs) {
+    requireKernelMode("diskWrite()");
+
+    int sectors = (long) sysArgs->arg2;
+    int track = (long) sysArgs->arg3;
+    int first = (long) sysArgs->arg4;
+    int unit = (long) sysArgs->arg5;
+
+    int val = diskWriteReal(unit, track, first, sectors, sysArgs->arg1);
+
+    sysArgs->arg1 = (void *) ((long) val);
+    if (val == -1) {
+      sysArgs->arg4 = (void *) ((long) -1)
+    } else {
+      sysArgs->arg4 = (void *) ((long) 0);
+    }
+    setUserMode();
+}
+
+int diskWriteReal(int unit, int track, int first, int sectors, void *buffer) {
+    requireKernelMode("diskWriteReal()");
+    //pass 1 to diskReadOrWriteReal() to indicate it's a write
+    return diskReadOrWriteReal(unit, track, first, sectors, buffer, 1);
+}
+
+
+/*------------------------------------------------------------------------
+    diskReadOrWriteReal: Reads or writes to the desk depending on the 
+                        value of write; write if write == 1, else read.
+    Returns: -1 if given illegal input, 0 otherwise
+ ------------------------------------------------------------------------*/
+int diskReadOrWriteReal(int unit, int track, int first, int sectors, void *buffer, int write) {
+    //return -1 if any arguments are invalid
+    if (unit > 1  || unit < 0 || 
+        track > ProcTable[diskPids[unit]].diskTrack || track < 0 ||
+        first > USLOSS_DISK_TRACK_SIZE || first < 0 || 
+        buffer == NULL  ||
+        (first + sectors)/USLOSS_DISK_TRACK_SIZE + track > ProcTable[diskPids[unit]].diskTrack) {
+        return -1;
+    }
+
+    procPtr driver = &ProcTable[diskPids[unit]];
+
+    //Retrieve the process
+
+    //If the process doesn't exist, initialize
+    if (ProcTable[getpid() % MAXPROC].pid == -1) {
+        initProc(getpid());
+    }
+    procPtr currProcess = &currProcessTable[getpid() % MAXPROC];
+
+    if (!write) {
+      currProcess->diskRequest.opr = USLOSS_DISK_READ;
+      currProcess->diskRequest.reg2 = buffer;
+      currProcess->diskTrack = track;
+      currProcess->diskFirstSec = first;
+      currProcess->diskSectors = sectors;
+      currProcess->diskBuffer = buffer;
+    } else {
+      currProcess->diskRequest.opr = USLOSS_DISK_WRITE;
+    }
+        
+    addDiskQ(&diskQs[unit], currProcess); // add to disk queue 
+    semvReal(driver->blockSem);  // wake up disk driver
+    sempReal(currProcess->blockSem); // block
+
+    int status;
+    int result = USLOSS_DeviceInput(USLOSS_DISK_DEV, unit, &status);
+
+    return result;
+}
+
 
 
 
 
 int diskSizeReal(int unit, int *sector, int *track, int *disk){}
 
+
+
+void termRead(systemArgs *sysArgs)
+{
+  //Check which mode we are in
+  if (!isKernelMode()) {
+    USLOSS_Console("termRead(): called while in user mode. Halting...\n");
+    USLOSS_Halt(1);
+  }
+  
+  char * buf = (char *) sysArgs->arg1;
+  int bufSize = (long) sysArgs->arg2;
+  int unit = (long) sysArgs->arg3;
+
+  int result = termReadReal(unit, bufSize, buf);
+  sysArgs->arg2 = (void *)((long) result);
+  if(result != -1)
+    sysArgs->arg1 = (void *)((long) 0);
+  else
+    sysArgs->arg1 = (void *)((long) -1);
+
+  userModeOn();
+}
+
+int termReadReal(int unit, int bufSize, char *buff)
+{
+  //Check which mode we are in
+  if (!isKernelMode()) {
+    USLOSS_Console("termReadReal(): called while in user mode. Halting...\n");
+    USLOSS_Halt(1);
+  }
+
+  //Check for invalid arguments
+  if(unit > USLOSS_TERM_UNITS - 1 || unit < 0 || bufSize < 0)
+    return -1;
+
+  char line[MAXLINE];
+  int num = 0;
+  int result;
+
+  //Enable interrupts if necessary using USLOSS_TERM_CTRL_RECV_INT and DeviceOutput
+  //and set termInterrupts = 1
+  if(termInterrupts[unit] == 0) {
+    num = USLOSS_TERM_CTRL_RECV_INT(num);
+    USLOSS_DeviceOutput(USLOSS_TERM_DEV, unit, (void *)((long)num));
+    termInterrupts[unit] = 1;
+  }
+
+  //Receive the line from the read line mbox
+  result = MboxReceive(mboxLineRead[unit], &line, MAXLINE);
+  //Check if we need to update the result if receive returned a value bigger than the buffer size
+  if(result > bufSize)
+    result = bufSize;
+
+  //Use memcpy to copy the line read from the mbox into the argument buff
+  memcpy(buff, line, result);
+  return result;
+}
+
+void termWrite(systemArgs *sysArgs)
+{
+  //Check which mode we are in
+  if (!isKernelMode()) {
+    USLOSS_Console("termWrite(): called while in user mode. Halting...\n");
+    USLOSS_Halt(1);
+  }
+
+  char * buf = (char *) sysArgs->arg1;
+  int bufSize = (long) sysArgs->arg2;
+  int unit = (long) sysArgs->arg3;
+
+  int result = termWriteReal(unit, bufSize, buf);
+  sysArgs->arg2 = (void *)((long)result);
+  if(result != -1)
+    sysArgs->arg1 = (void *)((long) 0);
+  else
+    sysArgs->arg1 = (void *)((long) -1);
+
+  userModeOn();  
+}
+
+int termWriteReal(int unit, int bufSize, char *text)
+{
+  //Check which mode we are in
+  if (!isKernelMode()) {
+    USLOSS_Console("termWriteReal(): called while in user mode. Halting...\n");
+    USLOSS_Halt(1);
+  }
+
+  //Check for invalid arguments
+  if(unit > USLOSS_TERM_UNITS - 1 || unit < 0 || bufSize < 0)
+    return -1;
+
+  int pid = getpid();
+  
+  MboxSend(mboxPIDs[unit], &pid, sizeof(int));
+  MboxSend(mboxLineWrite[unit], text, bufSize);
+  sempReal(procTable[pid%MAXPROC].blockedSem);
+  return bufSize;
+}
 
 
 
@@ -495,6 +747,22 @@ int isKernelMode()
   union psrValues xRay;
   xRay.integerPart = USLOSS_PsrGet();
   return xRay.bits.curMode;
+}
+
+/*
+ *  Routine:  userModeOn
+ *
+ *  Description: puts the program in user mode
+ *
+ *  Arguments: sysargs struct 
+ *
+ */
+void userModeOn()
+{
+  //Last bit is set to 0
+  int res = USLOSS_PsrSet( USLOSS_PsrGet() & ~USLOSS_PSR_CURRENT_MODE );
+  if(res < 0)
+    USLOSS_Console("userModeOn(): could not change to user mode\n");
 }
 
 void procInit(int index)

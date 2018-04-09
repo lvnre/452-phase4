@@ -418,7 +418,7 @@ void diskWrite(USLOSS_Sysargs * sysArgs) {
       sysArgs->arg4 = (void *) ((long) 0);
     }
     setUserMode();
-
+}
 
 int diskWriteReal(int unit, int track, int first, int sectors, void *buffer) {
     requireKernelMode("diskWriteReal()");
