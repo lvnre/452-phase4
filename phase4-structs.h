@@ -8,20 +8,21 @@ struct diskList {
   procPtr tail;
   int     lenght;
   int     type;
+  procPtr current;
 };
 
 struct proc {
   int                  pid;
   int 		       mboxID; 
   int                  blockedSem;
-  int		       wakeTime;
+  int		       time;
   void 		       *diskBuffer;
   procPtr 	       prevDisk;
   procPtr 	       nextDisk;
   int 		       track;
   int 		       firstSector;
   int 		       sectors;
-  USLOSS_DeviceRequest diskRequest;
+  USLOSS_DeviceRequest request;
 };
 
 struct pQueue {
