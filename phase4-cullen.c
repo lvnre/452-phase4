@@ -492,11 +492,17 @@ int TermWriter(char *arg)
  *
  */
 void sleep(USLOSS_Sysargs *sysArgs) {
-  requireKernelMode("sleep()");
-  int sec = (long) sysArgs->arg1;
-  int val = sleepReal(sec);
-  sysArgs->arg4 = (void *) ((long) val);
-  setUserMode();
+  //Check which mode we are in
+  if (!isKernelMode()) {
+    USLOSS_Console("sleep(): called while in user mode. Halting...\n");
+    USLOSS_Halt(1);
+  }
+  
+  int seconds = (long) sysArgs->arg1;
+  int result = sleepReal(seconds);
+  sysArgs->arg4 = (void *) ((long) result);
+
+  userModeOn();
 }
 
 /*
@@ -511,119 +517,140 @@ void sleep(USLOSS_Sysargs *sysArgs) {
  */
 
 int sleepReal(int procSeconds) {
-  requireKernelMode("sleepReal()");
-  if (procSeconds < 0) return -1;
-
-  //get the current process
-  if (ProcTable[getpid() % MAXPROC].pid == -1) {
-      //initialize ProcTable entry if the process does not exist yet
-      initProc(getpid());
+  //Check which mode we are in
+  if (!isKernelMode()) {
+    USLOSS_Console("sleepReal(): called while in user mode. Halting...\n");
+    USLOSS_Halt(1);
   }
-  procPtr currProc = &ProcTable[getpid() % MAXPROC];
+
+  //Check for invalid argument
+  if (procSeconds < 0)
+    return -1;
+
+  //Init the process if it is not yet done
+  if (procTable[getpid() % MAXPROC].pid == -1) {
+      //initialize ProcTable entry if the process does not exist yet
+      procInit(getpid());
+  }
+
+  //Get the current process
+  procPtr currProc = &procTable[getpid() % MAXPROC];
   
   //set time for the current process
-  currProc->wakeTime = USLOSS_Clock() + procSeconds*1000000;
+  currProc->time = USLOSS_Clock() + procSeconds*1000000;
 
-  //add the current process to the sleep heap
-  heapAdd(&sleepHeap, currProc);
+  //add the current process to the sleeping priority queue
+  addToSleepingQueue(&sleeping, currProc);
 
   //block the current process
-  sempReal(currProc->blockSem);
+  sempReal(currProc->blockedSem);
   return 0;
 }
 
 void diskRead(USLOSS_Sysargs * sysArgs) {
-    requireKernelMode("diskRead()");
+  //Check which mode we are in
+  if (!isKernelMode()) {
+    USLOSS_Console("diskRead(): called while in user mode. Halting...\n");
+    USLOSS_Halt(1);
+  }
+  
+  int sectors = (long) sysArgs->arg2;
+  int track = (long) sysArgs->arg3;
+  int first = (long) sysArgs->arg4;
+  int unit = (long) sysArgs->arg5;
+  
+  int result = diskReadReal(unit, track, first, sectors, sysArgs->arg1);
+  sysArgs->arg1 = (void *) ((long) result);
+  
+  if (result == -1) {
+    sysArgs->arg4 = (void *) ((long) -1);
+  }
+  else {
+    sysArgs->arg4 = (void *) ((long) 0);
+  }
 
-    int sectors = (long) sysArgs->arg2;
-    int track = (long) sysArgs->arg3;
-    int first = (long) sysArgs->arg4;
-    int unit = (long) sysArgs->arg5;
-
-    int val = diskReadReal(unit, track, first, sectors, sysArgs->arg1);
-
-    sysArgs->arg1 = (void *) ((long) val);
-    if (val == -1) {
-      sysArgs->arg4 = (void *) ((long) -1)
-    } else {
-      sysArgs->arg4 = (void *) ((long) 0);
-    }
-    setUserMode();
+  userModeOn();
 }
 
 int diskReadReal(int unit, int track, int first, int sectors, void *buffer) {
-    requireKernelMode("diskWriteReal");
-    //pass 0 to diskReadOrWriteReal() to indicate it's a read
-    return diskReadOrWriteReal(unit, track, first, sectors, buffer, 0);
+  //Check which mode we are in
+  if (!isKernelMode()) {
+    USLOSS_Console("diskReadReal(): called while in user mode. Halting...\n");
+    USLOSS_Halt(1);
+  }
+  //pass 0 to diskReadOrWriteReal() to indicate it's a read
+  return diskWriteOrReadReal(unit, track, first, sectors, buffer, 0);
 }
 
 
 /* extract values from sysargs and call diskWriteReal */
 void diskWrite(USLOSS_Sysargs * sysArgs) {
-    requireKernelMode("diskWrite()");
+  //Check which mode we are in
+  if (!isKernelMode()) {
+    USLOSS_Console("diskWrite(): called while in user mode. Halting...\n");
+    USLOSS_Halt(1);
+  }
+  int sectors = (long) sysArgs->arg2;
+  int track = (long) sysArgs->arg3;
+  int first = (long) sysArgs->arg4;
+  int unit = (long) sysArgs->arg5;
 
-    int sectors = (long) sysArgs->arg2;
-    int track = (long) sysArgs->arg3;
-    int first = (long) sysArgs->arg4;
-    int unit = (long) sysArgs->arg5;
-
-    int val = diskWriteReal(unit, track, first, sectors, sysArgs->arg1);
-
-    sysArgs->arg1 = (void *) ((long) val);
-    if (val == -1) {
-      sysArgs->arg4 = (void *) ((long) -1)
-    } else {
-      sysArgs->arg4 = (void *) ((long) 0);
-    }
-    setUserMode();
+  int result = diskWriteReal(unit, track, first, sectors, sysArgs->arg1);
+  sysArgs->arg1 = (void *) ((long) result);
+  
+  if (result == -1) {
+    sysArgs->arg4 = (void *) ((long) -1);
+  }
+  else {
+    sysArgs->arg4 = (void *) ((long) 0);
+  }
+  userModeOn();
 }
 
 int diskWriteReal(int unit, int track, int first, int sectors, void *buffer) {
-    requireKernelMode("diskWriteReal()");
-    //pass 1 to diskReadOrWriteReal() to indicate it's a write
-    return diskReadOrWriteReal(unit, track, first, sectors, buffer, 1);
+  //Check which mode we are in
+  if (!isKernelMode()) {
+    USLOSS_Console("diskWriteReal(): called while in user mode. Halting...\n");
+    USLOSS_Halt(1);
+  }
+  //pass 1 to diskReadOrWriteReal() to indicate it's a write
+  return diskWriteOrReadReal(unit, track, first, sectors, buffer, 1);
 }
 
 
-/*------------------------------------------------------------------------
-    diskReadOrWriteReal: Reads or writes to the desk depending on the 
-                        value of write; write if write == 1, else read.
-    Returns: -1 if given illegal input, 0 otherwise
- ------------------------------------------------------------------------*/
-int diskReadOrWriteReal(int unit, int track, int first, int sectors, void *buffer, int write) {
+int diskWriteOrReadReal(int unit, int track, int first, int sectors, void *buffer, int writeRead) {
+  
     //return -1 if any arguments are invalid
     if (unit > 1  || unit < 0 || 
-        track > ProcTable[diskPids[unit]].diskTrack || track < 0 ||
+        track > procTable[diskPids[unit]].track || track < 0 ||
         first > USLOSS_DISK_TRACK_SIZE || first < 0 || 
         buffer == NULL  ||
-        (first + sectors)/USLOSS_DISK_TRACK_SIZE + track > ProcTable[diskPids[unit]].diskTrack) {
+        (first + sectors)/USLOSS_DISK_TRACK_SIZE + track > procTable[diskPIDs[unit]].track) {
         return -1;
     }
 
-    procPtr driver = &ProcTable[diskPids[unit]];
-
-    //Retrieve the process
+    procPtr driver = &procTable[diskPIDs[unit]];
 
     //If the process doesn't exist, initialize
-    if (ProcTable[getpid() % MAXPROC].pid == -1) {
-        initProc(getpid());
+    if (procTable[getpid() % MAXPROC].pid == -1) {
+        procInit(getpid());
     }
-    procPtr currProcess = &currProcessTable[getpid() % MAXPROC];
+    procPtr currProcess = &procTable[getpid() % MAXPROC];
 
     if (!write) {
-      currProcess->diskRequest.opr = USLOSS_DISK_READ;
-      currProcess->diskRequest.reg2 = buffer;
-      currProcess->diskTrack = track;
-      currProcess->diskFirstSec = first;
-      currProcess->diskSectors = sectors;
+      currProcess->request.opr = USLOSS_DISK_READ;
+      currProcess->request.reg2 = buffer;
+      currProcess->track = track;
+      currProcess->firstSector = first;
+      currProcess->sectors = sectors;
       currProcess->diskBuffer = buffer;
     } else {
-      currProcess->diskRequest.opr = USLOSS_DISK_WRITE;
+      currProcess->request.opr = USLOSS_DISK_WRITE;
     }
         
-    addDiskQ(&diskQs[unit], currProcess); // add to disk queue 
-    semvReal(driver->blockSem);  // wake up disk driver
-    sempReal(currProcess->blockSem); // block
+    addToDiskList(&disks[unit], currProcess); // add to disk list 
+    semvReal(driver->blockedSem);         // wake disk driver
+    sempReal(currProcess->blockedSem);    // block current
 
     int status;
     int result = USLOSS_DeviceInput(USLOSS_DISK_DEV, unit, &status);
@@ -806,6 +833,27 @@ procPtr topSleepingQ(pQueue *q)
   q->processes[0];
 }
 
+void addToSleepingQueue(pQueue *q, procPtr new)
+{
+  int pred;
+  int i = q->size;
+
+  //Start from the back of the priority queue array
+  while(i > 0) {
+    pred = (i-1)/2;
+    //If we find the correct spot
+    if(q->processes[pred]->time <= new->time)
+      break;
+    //Otherwise update
+    q->processes[i] = q->processes[pred];
+    i = pred;
+  }
+  //Increment the length
+  q->size++;
+  //Store the new proc in the space where i ended
+  q->processes[i] = new;
+}
+
 procPtr removeTopSleeping(pQueue *q)
 {
   //Make sure there are procs in the queue
@@ -843,6 +891,51 @@ procPtr removeTopSleeping(pQueue *q)
   return removedProc;
 }
 
+
+void addToDiskList(diskList *list, procPtr new)
+{
+  //Update the length
+  list->length++;
+  
+  //Check if this is the first process to add
+  if(list->head == NULL){
+    list->head = new;
+    list->tail = new;
+    
+    list->head->nextDisk = NULL;
+    list->tail->nextDisk = NULL;
+
+    list->head->prevDisk = NULL;
+    list->tail->prevDisk = NULL;
+  }
+  else {
+    //Find correct location based of track values
+    procPtr front = list->head;
+    procPtr back = list->tail;
+
+    //Move front forward until we find a track value that is greater than new's
+    //or front is null
+    while(front != NULL && front->track <= new->track){
+      back = front;
+      front = front->nextDisk;
+      //Check if we've looped back to the front
+      if(front == list->head) break;
+    }
+
+    //Check if loop broke because front is null
+    if(front == NULL) front = list->head;
+
+    back->nextDisk = new; //Update the previous' proc next pointer to new
+    new->prevDisk = back; //Update the new proc prev pointer to back
+
+    front->prevDisk = new; //Update the front proc prev disk pointer to new
+    new->nextDisk = front; //Update the new proc next pointer to point to front
+
+    //Update head and tail pointers of the list
+    if(new->track >= list->tail->track) list->tail = new;
+    if(new->track < list->head->track) list->head = new;
+  }
+}
 
 procPtr removeFromDiskList(diskList *list)
 {

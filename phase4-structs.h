@@ -6,7 +6,7 @@ typedef struct pQueue pQueue;
 struct diskList {
   procPtr head;
   procPtr tail;
-  int     lenght;
+  int     length;
   int     type;
   procPtr current;
 };
