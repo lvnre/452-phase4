@@ -1,7 +1,8 @@
+#include <usloss.h>
+#include <usyscall.h>
 #include <phase1.h>
 #include <phase2.h>
-#include <usyscall.h>
-#include <usloss.h>
+
 
 void checkMode(){
   if (USLOSS_PsrGet() & USLOSS_PSR_CURRENT_MODE) {
@@ -26,7 +27,7 @@ int DiskRead(void *diskBuffer, int unit, int track, int first,
 
   USLOSS_Sysargs sysArgs;
   checkMode();
-  sysArgs.number = SYS_READ;
+  sysArgs.number = SYS_DISKREAD;
   sysArgs.arg1 = diskBuffer;
   sysArgs.arg2 = (void *) ((long) sectors);
   sysArgs.arg3 = (void *) ((long) track);
@@ -45,7 +46,7 @@ int DiskWrite(void *diskBuffer, int unit, int track, int first,
 
   USLOSS_Sysargs sysArgs;
   checkMode();
-  sysArgs.number = SYS_WRITE;
+  sysArgs.number = SYS_DISKWRITE;
   sysArgs.arg1 = diskBuffer;
   sysArgs.arg2 = (void *) ((long) sectors);
   sysArgs.arg3 = (void *) ((long) track);

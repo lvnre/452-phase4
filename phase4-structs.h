@@ -3,6 +3,19 @@ typedef struct proc * procPtr;
 typedef struct diskList diskList;
 typedef struct pQueue pQueue;
 
+struct psrBits {
+    unsigned int curMode:1;
+    unsigned int curIntEnable:1;
+    unsigned int prevMode:1;
+    unsigned int prevIntEnable:1;
+    unsigned int unused:28;
+};
+
+union psrValues {
+    struct psrBits bits;
+    unsigned int integerPart;
+};
+
 struct diskList {
   procPtr head;
   procPtr tail;

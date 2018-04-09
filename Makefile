@@ -5,7 +5,7 @@ ASSIGNMENT = 452phase4
 CC = gcc
 AR = ar
 
-COBJS = phase4-cullen.o libuserP4.o
+COBJS = phase4-cullen.o libuserP4.o 
 CSRCS = ${COBJS:.o=.c}
 
 PHASE1LIB = patrickphase1
@@ -14,7 +14,7 @@ PHASE3LIB = patrickphase3
 #PHASE1LIB = patrickphase1debug
 #PHASE2LIB = patrickphase2debug
 
-HDRS = phase4-structs.h
+HDRS = libuser.h libuserP4.h phase1.h phase2.h phase3.h phase4.h providedPrototypes.h phase4-structs.h
 
 INCLUDE = ${PREFIX}/include
 
@@ -52,8 +52,8 @@ clean:
 	rm -f $(COBJS) $(TARGET) test*.o test*.txt term* $(TESTS) \
 		libuser.o p1.o core
 
-phase3.o:	sems.h
+phase4.o:	libuser.h libuserP4.h phase1.h phase2.h phase3.h phase4.h providedPrototypes.h phase4-structs.h
 
 submit: $(CSRCS) $(HDRS) Makefile
-	tar cvzf phase4.tgz $(CSRCS) $(HDRS) Makefile
+	tar cvzf phase3.tgz $(CSRCS) $(HDRS) Makefile
 

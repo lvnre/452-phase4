@@ -1,14 +1,15 @@
 #include <usloss.h>
+#include <usyscall.h>
+#include <providedPrototypes.h>
 #include <phase1.h>
 #include <phase2.h>
 #include <phase3.h>
 #include <phase4.h>
-#include <providedPrototypes.h>
 #include <stdlib.h>
 #include <phase4-structs.h>
 #include <stdio.h>
 #include <string.h>
-#include <usyscall.h>
+#define ABS(a,b) (a-b > 0 ? a-b : -(a-b))
 
 
 int  semRunning;
@@ -70,174 +71,176 @@ pQueue sleeping;
 void
 start3(void)
 {
-    char	name[128];
-    char        termbuf[10];
-    int		i;
-    int		clockPID;
-    int		pid;
-    int		status;
-    char        diskbuf[10];
-    /*
-     * Check kernel mode here.
-     */
-      //Check which mode we are in
-    if (!isKernelMode()) {
-      USLOSS_Console("start3(): called while in user mode. Halting...\n");
+  char	name[128];
+  char        termbuf[10];
+  int		i;
+  int		clockPID;
+  int		pid;
+  int		status;
+  char        diskbuf[10];
+  /*
+   * Check kernel mode here.
+   */
+  //Check which mode we are in
+  if (!isKernelMode()) {
+    USLOSS_Console("start3(): called while in user mode. Halting...\n");
+    USLOSS_Halt(1);
+  }
+
+  //Set sleeping queue size to 0
+  sleeping.size = 0;
+  
+  //Initialize the procTable
+  for(i = 0; i < MAXPROC; i++)
+    procInit(i);
+
+  //Initialize term mboxes
+  for(i = 0; i < USLOSS_TERM_UNITS; i++){
+    mboxPIDs[i] = MboxCreate(1, sizeof(int));  
+    mboxCharRec[i] = MboxCreate(1, MAXLINE);  
+    mboxCharSend[i] = MboxCreate(1, MAXLINE);   
+    mboxLineRead[i] = MboxCreate(10, MAXLINE);   
+    mboxLineWrite[i] = MboxCreate(10, MAXLINE);  
+  }
+    
+  //Initialize systemCallVec
+  systemCallVec[SYS_SLEEP]     = sleep;
+  systemCallVec[SYS_DISKWRITE] = diskWrite;
+  systemCallVec[SYS_DISKREAD]  = diskRead;
+  systemCallVec[SYS_DISKSIZE]  = diskSize;
+  systemCallVec[SYS_TERMWRITE] = termWrite;
+  systemCallVec[SYS_TERMREAD]  = termRead;
+    
+
+
+  /*
+   * Create clock device driver 
+   * I am assuming a semaphore here for coordination.  A mailbox can
+   * be used instead -- your choice.
+   */
+  semRunning = semcreateReal(0);
+  clockPID = fork1("Clock driver", ClockDriver, NULL, USLOSS_MIN_STACK, 2);
+  if (clockPID < 0) {
+    USLOSS_Console("start3(): Can't create clock driver\n");
+    USLOSS_Halt(1);
+  }
+  /*
+   * Wait for the clock driver to start. The idea is that ClockDriver
+   * will V the semaphore "semRunning" once it is running.
+   */
+
+  sempReal(semRunning);
+
+  /*
+   * Create the disk device drivers here.  You may need to increase
+   * the stack size depending on the complexity of your
+   * driver, and perhaps do something with the pid returned.
+   */
+
+  int num;
+  for (i = 0; i < USLOSS_DISK_UNITS; i++) {
+    sprintf(diskbuf, "%d", i);
+      
+    pid = fork1("Disk driver", DiskDriver, NULL, USLOSS_MIN_STACK, 2); //Create driver process
+
+    //Check if fork1 succeeded
+    if(pid < 0) {
+      USLOSS_Console("start3(): Can't create disk driver\n");
       USLOSS_Halt(1);
     }
-
-    //Set sleeping queue size to 0
-    sleeping.size = 0;
     
-    //Initialize the procTable
-    for(i = 0; i < MAXPROC; i++)
-      procInit(i);
-
-    //Initialize term mboxes
-    for(i = 0; i < USLOSS_TERM_UNITS; i++){
-      mboxPIDs[i] = MboxCreate(1, sizeof(int));  
-      mboxCharRec[i] = MboxCreate(1, MAXLINE);  
-      mboxCharSend[i] = MboxCreate(1, MAXLINE);   
-      mboxLineRead[i] = MboxCreate(10, MAXLINE);   
-      mboxLineWrite[i] = MboxCreate(10, MAXLINE);  
-    }
-    
-    //Initialize systemCallVec
-    systemCallVec[SYS_SLEEP]     = sleep;
-    systemCallVec[SYS_DISKWRITE] = diskWrite;
-    systemCallVec[SYS_DISKREAD]  = diskRead;
-    systemCallVec[SYS_DISKSIZE]  = diskSize;
-    systemCallVec[SYS_TERMWRITE] = termWrite;
-    systemCallVec[SYS_TERMREAD]  = termRead;
-    
-
-
-    /*
-     * Create clock device driver 
-     * I am assuming a semaphore here for coordination.  A mailbox can
-     * be used instead -- your choice.
-     */
-    semRunning = semcreateReal(0);
-    clockPID = fork1("Clock driver", ClockDriver, NULL, USLOSS_MIN_STACK, 2);
-    if (clockPID < 0) {
-	USLOSS_Console("start3(): Can't create clock driver\n");
-	USLOSS_Halt(1);
-    }
-    /*
-     * Wait for the clock driver to start. The idea is that ClockDriver
-     * will V the semaphore "semRunning" once it is running.
-     */
-
+    //Store the pid of the new disk driver into our array of disk pids
+    diskPIDs[i] = pid;
+    //Wait for the disk driver to start by calling sempReal
     sempReal(semRunning);
 
-    /*
-     * Create the disk device drivers here.  You may need to increase
-     * the stack size depending on the complexity of your
-     * driver, and perhaps do something with the pid returned.
-     */
 
-    for (i = 0; i < USLOSS_DISK_UNITS; i++) {
-      sprintf(diskbuf, "%d", i);
-      
-      pid = fork1("Disk driver", DiskDriver, NULL, USLOSS_MIN_STACK, 2); //Create driver process
-
-      //Check if fork1 succeeded
-      if(pid < 0) {
-	USLOSS_Console("start3(): Can't create disk driver\n");
-	USLOSS_Halt(1);
-      }
-
-      //Store the pid of the new disk driver into our array of disk pids
-      diskPIDs[i] = pid;
-      //Wait for the disk driver to start by calling sempReal
-      sempReal(semRunning);
-      
-      //Get size of the disk of this unit
-      int sec;
-      int track;
-      diskSizeReal(i, &sec, &track, &procTable[pid%MAXPROC].track);
-    }
-
-    /*
-     * Create terminal device drivers.
-     */
-    for(i = 0; i < USLOSS_TERM_UNITS; i++) {
-      sprintf(termbuf, "%d", i);
-
-      //Create term processes and store them in the termProcs matrix
-      termProcs[i][0] = fork1(name, TermWriter, termbuf, USLOSS_MIN_STACK, 2); //Create term process
-      termProcs[i][1] = fork1(name, TermReader, termbuf, USLOSS_MIN_STACK, 2); //Create term process
-      termProcs[i][2] = fork1(name, TermDriver, termbuf, USLOSS_MIN_STACK, 2); //Create term process
-
-      //Wait for all term drivers to start by calling sempReal
-      sempReal(semRunning);
-      sempReal(semRunning);
-      sempReal(semRunning);      
-    }
+    //Get size of the disk of this unit
+    diskSizeReal(i, &num, &num, &procTable[pid%MAXPROC].track);
+  }
 
 
-    /*
-     * Create first user-level process and wait for it to finish.
-     * These are lower-case because they are not system calls;
-     * system calls cannot be invoked from kernel mode.
-     * I'm assuming kernel-mode versions of the system calls
-     * with lower-case first letters, as shown in provided_prototypes.h
-     */
-    pid = spawnReal("start4", start4, NULL, 4 * USLOSS_MIN_STACK, 3);
-    pid = waitReal(&status);
 
-    status = 0;
+  /*
+   * Create terminal device drivers.
+   */
+  for(i = 0; i < USLOSS_TERM_UNITS; i++) {
+    sprintf(termbuf, "%d", i);
 
-    /*
-     * Zap the device drivers
-     */
-    zap(clockPID);  // clock driver
+    //Create term processes and store them in the termProcs matrix
+    termProcs[i][0] = fork1(name, TermWriter, termbuf, USLOSS_MIN_STACK, 2); //Create term process
+    termProcs[i][1] = fork1(name, TermReader, termbuf, USLOSS_MIN_STACK, 2); //Create term process
+    termProcs[i][2] = fork1(name, TermDriver, termbuf, USLOSS_MIN_STACK, 2); //Create term process
+    
+    //Wait for all term drivers to start by calling sempReal
+    sempReal(semRunning);
+    sempReal(semRunning);
+    sempReal(semRunning);      
+  }
+
+
+  /*
+   * Create first user-level process and wait for it to finish.
+   * These are lower-case because they are not system calls;
+   * system calls cannot be invoked from kernel mode.
+   * I'm assuming kernel-mode versions of the system calls
+   * with lower-case first letters, as shown in provided_prototypes.h
+   */
+  pid = spawnReal("start4", start4, NULL, 4 * USLOSS_MIN_STACK, 3);
+  pid = waitReal(&status);
+  
+  status = 0;
+
+  /*
+   * Zap the device drivers
+   */
+  zap(clockPID);  // clock driver
+  join(&status);
+  
+  //Zap the disk drivers
+  for(i = 0; i < USLOSS_DISK_UNITS; i++) {
+    semvReal(procTable[diskPIDs[i]].blockedSem);
+    zap(diskPIDs[i]);
     join(&status);
+  }
 
-    //Zap the disk drivers
-    for(i = 0; i < USLOSS_DISK_UNITS; i++) {
-      semvReal(procTable[diskPIDs[i]].blockedSem);
-      zap(diskPIDs[i]);
-      join(&status);
-    }
+  //Zap term writers, readers, and drivers
+  //Term Writers
+  for(i = 0; i < USLOSS_TERM_UNITS; i++) {
+    MboxSend(mboxLineWrite[i], NULL, 0);
+    zap(termProcs[i][0]);
+    join(&status);
+  }
 
-    //Zap term writers, readers, and drivers
-    //Term Writers
-    for(i = 0; i < USLOSS_TERM_UNITS; i++) {
-      MboxSend(mboxLineWrite[i], NULL, 0);
-      zap(termProcs[i][0]);
-      join(&status);
-    }
+  //Term Readers
+  for(i = 0; i < USLOSS_TERM_UNITS; i++) {
+    MboxSend(mboxCharRec[i], NULL, 0);
+    zap(termProcs[i][1]);
+    join(&status);
+  }
 
-    //Term Readers
-    for(i = 0; i < USLOSS_TERM_UNITS; i++) {
-      MboxSend(mboxCharRec[i], NULL, 0);
-      zap(termProcs[i][1]);
-      join(&status);
-    }
+  //Term Drivers
+  for(i = 0; i < USLOSS_TERM_UNITS; i++) {
+    char file[50];
+    int num = 0;
+    //Enable recv interrupts
+    num = USLOSS_TERM_CTRL_RECV_INT(num);
+    USLOSS_DeviceOutput(USLOSS_TERM_DEV, i, (void *)((long)num));
 
-    //Term Drivers
-    for(i = 0; i < USLOSS_TERM_UNITS; i++) {
-      char file[50];
-      int num = 0;
-      //Enable recv interrupts
-      num = USLOSS_TERM_CTRL_RECV_INT(num);
-      USLOSS_DeviceOutput(USLOSS_TERM_DEV, i, (void *)((long)num));
+    //Write to the term*.in file
+    sprintf(file, "term%d.in", i);
+    FILE *fn = fopen(file, "a+");
+    fprintf(fn, "last line\n");
+    fflush(fn);
+    fclose(fn);
 
-      //Write to the term*.in file
-      sprintf(file, "term%d.in", i);
-      FILE *fn = fopen(file, "a+");
-      fprintf(fn, "last line\n");
-      fflush(fn);
-      fclose(fn);
-
-      //Zap the term driver
-      zap(termProcs[i][2]);
-      join(&status);
+    //Zap the term driver
+    zap(termProcs[i][2]);
+    join(&status);
       
-    }
-    // eventually, at the end:
-    quit(0);
+  }
+  // eventually, at the end:
+  quit(0);
 }
 
 int
@@ -262,8 +265,9 @@ ClockDriver(char *arg)
 	 * whose time has come.
 	 */
 	procPtr sleepingProc;
+	
 	//Check if there are procs on the sleeping queue and check it's time
-	if(sleeping.size > 0 && USLOSS_Clock() >= topSleepingQ(&sleeping)->time){
+	if(sleeping.size > 0 && readtime() >= topSleepingQ(&sleeping)->time){
 	  
 	  //Get the proc off the top of the sleeping queue and wake it up 
 	  sleepingProc = removeTopSleepingQ(&sleeping);
@@ -281,7 +285,7 @@ DiskDriver(char *arg)
   int retVal;
 
   //Initialize the process in the procTable
-  initProc(getpid());
+  procInit(getpid());
 
   //Get the proc
   procPtr currProc = &procTable[getpid()%MAXPROC];
@@ -311,7 +315,7 @@ DiskDriver(char *arg)
       if(disks[unit].current == NULL)
 	disks[unit].current = disks[unit].head;
       
-      procPtr proc = &disks[unit].current;
+      procPtr proc = disks[unit].current;
       int track = proc->track;
 
       //Read/Write requests
@@ -331,7 +335,7 @@ DiskDriver(char *arg)
 
 	  //Write and read sectors
 	  int sec = proc->firstSector;
-	  while(proc->sectors > 0 && s < USLOSS_DISK_TRACK_SIZE) {
+	  while(proc->sectors > 0 && sec < USLOSS_DISK_TRACK_SIZE) {
 	    proc->request.reg1 = (void *)((long) sec);
 
 	    USLOSS_DeviceOutput(USLOSS_DISK_DEV, unit, &proc->request);
@@ -344,7 +348,7 @@ DiskDriver(char *arg)
 	    proc->sectors--;
 	    //Update request
 	    proc->request.reg2 += USLOSS_DISK_SECTOR_SIZE;
-	    s++;
+	    sec++;
 	  }
 
 	  track++;
@@ -426,15 +430,15 @@ int TermReader(char *arg)
     nextIndex++;
 
     //Check if we have read the max amount of characters or we found a new line char
-    if(next == MAXLINE || c == '\n') {
+    if(nextIndex == MAXLINE || c == '\n') {
       //Store a null char at the end
-      lineRead[next] = '\0';
+      lineRead[nextIndex] = '\0';
 
       //Send the completed line to the line read mbox
-      MboxSend(mboxLineRead[unit], line, next);
+      MboxSend(mboxLineRead[unit], lineRead, nextIndex);
 
       //Reset variables to read another line
-      next = 0;
+      nextIndex = 0;
       for(i = 0; i < MAXLINE; i++)
 	lineRead[i] = '\0';
     }  
@@ -448,6 +452,7 @@ int TermWriter(char *arg)
   char line[MAXLINE];
   int nextIndex;
   int status;
+  int num = 0;
 
   semvReal(semRunning);
 
@@ -457,10 +462,10 @@ int TermWriter(char *arg)
 
     //Check if the proc was zapped while trying to receive
     if(isZapped())
-      return;
+      break;
 
     //Enable transmit interrupts
-    int num = USLOSS_TERM_CTRL_XMIT_INT(num);
+    num = USLOSS_TERM_CTRL_XMIT_INT(num);
     //Receive interrupt
     USLOSS_DeviceOutput(USLOSS_TERM_DEV, unit, (void *)((long)num));
 
@@ -558,11 +563,9 @@ int sleepReal(int procSeconds) {
   procPtr currProc = &procTable[getpid() % MAXPROC];
   
   //set time for the current process
-  currProc->time = USLOSS_Clock() + procSeconds*1000000;
-
+  currProc->time = readtime() + procSeconds*1000000;
   //add the current process to the sleeping priority queue
   addToSleepingQ(&sleeping, currProc);
-
   //block the current process
   sempReal(currProc->blockedSem);
   return 0;
@@ -643,7 +646,7 @@ int diskWriteOrReadReal(int unit, int track, int first, int sectors, void *buffe
   
     //return -1 if any arguments are invalid
     if (unit > 1  || unit < 0 || 
-        track > procTable[diskPids[unit]].track || track < 0 ||
+        track > procTable[diskPIDs[unit]].track || track < 0 ||
         first > USLOSS_DISK_TRACK_SIZE || first < 0 || 
         buffer == NULL  ||
         (first + sectors)/USLOSS_DISK_TRACK_SIZE + track > procTable[diskPIDs[unit]].track) {
@@ -658,7 +661,7 @@ int diskWriteOrReadReal(int unit, int track, int first, int sectors, void *buffe
     }
     procPtr currProcess = &procTable[getpid() % MAXPROC];
 
-    if (!write) {
+    if (!writeRead) {
       currProcess->request.opr = USLOSS_DISK_READ;
       currProcess->request.reg2 = buffer;
       currProcess->track = track;
@@ -687,7 +690,9 @@ void diskSize(USLOSS_Sysargs * sysArgs) {
     USLOSS_Halt(1);
   }
   int unit = (long) sysArgs->arg1;
-  int sector, track, disk;
+  int sector;
+  int track;
+  int disk;
   int val = diskSizeReal(unit, &sector, &track, &disk);
 
   sysArgs->arg1 = (void *) ((long) sector);
@@ -716,11 +721,11 @@ int diskSizeReal(int unit, int *sector, int *track, int *disk) {
     return -1;
   }
 
-  procPtr drivePtr = &procTable[diskPids[unit]];
+  procPtr drivePtr = &procTable[diskPIDs[unit]];
 
   // get the number of tracks for the first time
   if (drivePtr->track == -1) {
-    
+
     //initialize the process if the proc table entry is empty
     if (procTable[getpid() % MAXPROC].pid == -1) {
       procInit(getpid());
@@ -735,15 +740,16 @@ int diskSizeReal(int unit, int *sector, int *track, int *disk) {
     //set request values for the current proc
     USLOSS_DeviceRequest request;
     request.opr = USLOSS_DISK_TRACKS;
-    request.reg1 = &drivePtr->diskTrack;
+    request.reg1 = &drivePtr->track;
     currProc->request = request;
 
     //add to disk queue
     addToDiskList(&disks[unit], currProc);
+
     //unblock the drive ptr
-    semvReal(drivePtr->blockedSem); 
+    semvReal(drivePtr->blockedSem);
+
     //block the current proc
-    sempReal(currProc->blockedSem);
   }
 
   *sector = USLOSS_DISK_SECTOR_SIZE;
@@ -885,8 +891,8 @@ void procInit(int index)
 {
   int i = index % MAXPROC;
   procTable[i].pid = index;
-  procTable[i].mboxId = MboxCreate(0,0);
-  procTable[i].blockedSem = semCreateReal(0);
+  procTable[i].mboxID = MboxCreate(0,0);
+  procTable[i].blockedSem = semcreateReal(0);
   procTable[i].time = -1;
   procTable[i].prevDisk = NULL;
   procTable[i].nextDisk = NULL;
@@ -905,7 +911,7 @@ void emptyProc(int index)
 {
   int i = index % MAXPROC;
   procTable[i].pid = -1;
-  procTable[i].mboxId = -1;
+  procTable[i].mboxID = -1;
   procTable[i].blockedSem = -1;
   procTable[i].time = -1;
   procTable[i].prevDisk = NULL;
@@ -963,16 +969,16 @@ procPtr removeTopSleepingQ(pQueue *q)
     r = i*2 +2;
 
     //Find smallest child
-    if(r <= q->size && && q->processes[r]->time < q->processes[smallest]->time) 
-      min = right;
+    if(r <= q->size && q->processes[r]->time < q->processes[smallest]->time) 
+      smallest = r;
     if(l <= q->size && q->processes[l]->time < q->processes[smallest]->time) 
-      min = left;
+      smallest = l;
 
     if(smallest != i) {
       procPtr temp = q->processes[i];
       q->processes[i] = q->processes[smallest];
       q->processes[smallest] = temp;
-      i = min;
+      i = smallest;
     }
     else
       break;
@@ -1037,7 +1043,7 @@ procPtr removeFromDiskList(diskList *list)
   procPtr retProc = list->current;
 
   //Remove the only disk on this list
-  if(list->size == 1) {
+  if(list->length == 1) {
     list->current = NULL;
     list->head = NULL;
     list->tail = NULL;
