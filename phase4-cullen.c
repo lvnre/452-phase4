@@ -3,26 +3,47 @@
 #include <phase2.h>
 #include <phase3.h>
 #include <phase4.h>
+#include <providedPrototypes.h>
 #include <stdlib.h>
 #include <phase4-structs.h>
 #include <stdio.h>
 #include <string.h>
+#include <usyscall.h>
+
 
 int  semRunning;
 
 int  ClockDriver(char *);
 int  DiskDriver(char *);
-
+int  TermDriver(char *);
+int  TermReader(char *);
+int  TermWriter(char *);
+void sleep(USLOSS_Sysargs *);
+int  sleepReal(int); 
+void diskRead(USLOSS_Sysargs *);
+int  diskReadReal(int, int, int, int, void *);
+void diskWrite(USLOSS_Sysargs *);
+int  diskWriteReal(int, int, int, int, void *);
+int  diskWriteOrReadReal(int, int, int, int, void *, int);
+void diskSize(USLOSS_Sysargs *);
 int diskSizeReal(int unit, int *sector, int *track, int *disk);
+void termRead(USLOSS_Sysargs *);
+int  termReadReal(int, int, char *);
+void termWrite(USLOSS_Sysargs *);
+int  termWriteReal(int, int, char *);
 
 /*HELPER FUNCTION DECLARATION*/
 int isKernelMode();
-void enableInterrupts();
+void userModeOn();
 void procInit(int index);
 void emptyProc(int index);
+void enableInterrupts();
 procPtr topSleepingQ(pQueue *q);
-procPtr removeTopSleeping(pQueue *q);
+void addToSleepingQ(pQueue *, procPtr);
+procPtr removeTopSleepingQ(pQueue *q);
+void addToDiskList(diskList *, procPtr);
 procPtr removeFromDiskList(diskList *list);
+
 
 
 
@@ -245,7 +266,7 @@ ClockDriver(char *arg)
 	if(sleeping.size > 0 && USLOSS_Clock() >= topSleepingQ(&sleeping)->time){
 	  
 	  //Get the proc off the top of the sleeping queue and wake it up 
-	  sleepingProc = removeTopSleeping(&sleeping);
+	  sleepingProc = removeTopSleepingQ(&sleeping);
 	  semvReal(sleepingProc->blockedSem);
 	}
     }
@@ -540,7 +561,7 @@ int sleepReal(int procSeconds) {
   currProc->time = USLOSS_Clock() + procSeconds*1000000;
 
   //add the current process to the sleeping priority queue
-  addToSleepingQueue(&sleeping, currProc);
+  addToSleepingQ(&sleeping, currProc);
 
   //block the current process
   sempReal(currProc->blockedSem);
@@ -734,7 +755,7 @@ int diskSizeReal(int unit, int *sector, int *track, int *disk) {
 }
 
 
-void termRead(systemArgs *sysArgs)
+void termRead(USLOSS_Sysargs *sysArgs)
 {
   //Check which mode we are in
   if (!isKernelMode()) {
@@ -791,7 +812,7 @@ int termReadReal(int unit, int bufSize, char *buff)
   return result;
 }
 
-void termWrite(systemArgs *sysArgs)
+void termWrite(USLOSS_Sysargs *sysArgs)
 {
   //Check which mode we are in
   if (!isKernelMode()) {
@@ -901,7 +922,7 @@ procPtr topSleepingQ(pQueue *q)
   q->processes[0];
 }
 
-void addToSleepingQueue(pQueue *q, procPtr new)
+void addToSleepingQ(pQueue *q, procPtr new)
 {
   int pred;
   int i = q->size;
@@ -922,7 +943,7 @@ void addToSleepingQueue(pQueue *q, procPtr new)
   q->processes[i] = new;
 }
 
-procPtr removeTopSleeping(pQueue *q)
+procPtr removeTopSleepingQ(pQueue *q)
 {
   //Make sure there are procs in the queue
   if(q->size <= 0)

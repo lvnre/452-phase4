@@ -1,3 +1,8 @@
+#include <phase1.h>
+#include <phase2.h>
+#include <usyscall.h>
+#include <usloss.h>
+
 void checkMode(){
   if (USLOSS_PsrGet() & USLOSS_PSR_CURRENT_MODE) {
     USLOSS_Console("Attempting to invoke syscall from kernel!\n");
