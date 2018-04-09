@@ -293,4 +293,204 @@ void emptyProc(int index)
   procTable[i].nextDisk = NULL;
 }
 
+/************ REQUIRE KERNEL MODE ***********/
+/* ------------------------------------------------------------------------
+   Name - requireKernelMode
+   Purpose - Checks if we are in kernel mode and prints an error messages
+              and halts USLOSS if not.
+   Parameters - The name of the function calling it, for the error message.
+   Side Effects - Prints and halts if we are not in kernel mode
+   ------------------------------------------------------------------------ */
+
+/*
+ *  Routine:  requireKernelMode
+ *
+ *  Description: Checks if we are in kernel mode and prints an error messages
+                 and halts USLOSS if not.
+ *
+ *  Arguments:   Name of the function that needs to check if in kernel mode
+ *
+ *  Return Value: void
+ *
+ */
+void requireKernelMode(char *name)
+{
+    if( (USLOSS_PSR_CURRENT_MODE & USLOSS_PsrGet()) == 0 ) {
+        USLOSS_Console("%s: called while in user mode, by process %d. Halting...\n", 
+             name, getpid());
+        USLOSS_Halt(1); 
+    }
+} 
+
+/************ SLEEPS *************/
+
+/*
+ *  Routine:  sleep
+ *
+ *  Description: Extract the value needed for sleepReal()
+ *
+ *  Arguments:    USLOSS_Sysargs *sysArgs - system arguments passed to the sleep
+                  function
+ *
+ *  Return Value: void
+ *
+ */
+
+void sleep(USLOSS_Sysargs *sysArgs) {
+  requireKernelMode("sleep()");
+  int sec = (long) sysArgs->arg1;
+  int val = sleepReal(sec);
+  sysArgs->arg4 = (void *) ((long) val);
+  setUserMode();
+}
+
+
+/*
+ *  Routine:  sleepReal()
+ *
+ *  Description: Extract the value needed for sleepReal()
+ *
+ *  Arguments:    int procSeconds - number of seconds associated with the current process
+ *
+ *  Return Value: -1 if the processes time slice is < 0, 0 if successful
+ *
+ */
+
+int sleepReal(int procSeconds) {
+  requireKernelMode("sleepReal()");
+  if (procSeconds < 0) return -1;
+
+  //get the current process
+  if (ProcTable[getpid() % MAXPROC].pid == -1) {
+      //initialize ProcTable entry if the process does not exist yet
+      initProc(getpid());
+  }
+  procPtr currProc = &ProcTable[getpid() % MAXPROC];
+  
+  //set wake time for the current process
+  currProc->wakeTime = USLOSS_Clock() + procSeconds*1000000;
+
+  //add the current process to the sleep heap
+  heapAdd(&sleepHeap, currProc);
+
+  //block the current process
+  sempReal(currProc->blockSem);
+  return 0;
+}
+
+
+/* extract values from sysargs and call diskReadReal */
+void diskRead(USLOSS_Sysargs * sysArgs) {
+    requireKernelMode("diskRead()");
+
+    int sectors = (long) sysArgs->arg2;
+    int track = (long) sysArgs->arg3;
+    int first = (long) sysArgs->arg4;
+    int unit = (long) sysArgs->arg5;
+
+    int val = diskReadReal(unit, track, first, sectors, sysArgs->arg1);
+
+    sysArgs->arg1 = (void *) ((long) val);
+    if (val == -1) {
+      sysArgs->arg4 = (void *) ((long) -1)
+    } else {
+      sysArgs->arg4 = (void *) ((long) 0);
+    }
+    setUserMode();
+}
+
+
+/* extract values from sysargs and call diskWriteReal */
+void diskWrite(USLOSS_Sysargs * sysArgs) {
+    requireKernelMode("diskWrite()");
+
+    int sectors = (long) sysArgs->arg2;
+    int track = (long) sysArgs->arg3;
+    int first = (long) sysArgs->arg4;
+    int unit = (long) sysArgs->arg5;
+
+    int val = diskWriteReal(unit, track, first, sectors, sysArgs->arg1);
+
+    sysArgs->arg1 = (void *) ((long) val);
+    if (val == -1) {
+      sysArgs->arg4 = (void *) ((long) -1)
+    } else {
+      sysArgs->arg4 = (void *) ((long) 0);
+    }
+    setUserMode();
+
+
+int diskWriteReal(int unit, int track, int first, int sectors, void *buffer) {
+    requireKernelMode("diskWriteReal()");
+    //pass 1 to diskReadOrWriteReal() to indicate it's a write
+    return diskReadOrWriteReal(unit, track, first, sectors, buffer, 1);
+}
+
+
+
+int diskReadReal(int unit, int track, int first, int sectors, void *buffer) {
+    requireKernelMode("diskWriteReal");
+    //pass 0 to diskReadOrWriteReal() to indicate it's a read
+    return diskReadOrWriteReal(unit, track, first, sectors, buffer, 0);
+}
+
+
+/*------------------------------------------------------------------------
+    diskReadOrWriteReal: Reads or writes to the desk depending on the 
+                        value of write; write if write == 1, else read.
+    Returns: -1 if given illegal input, 0 otherwise
+ ------------------------------------------------------------------------*/
+int diskReadOrWriteReal(int unit, int track, int first, int sectors, void *buffer, int write) {
+    //return -1 if any arguments are invalid
+    if (unit > 1  || unit < 0 || 
+        track > ProcTable[diskPids[unit]].diskTrack || track < 0 ||
+        first > USLOSS_DISK_TRACK_SIZE || first < 0 || 
+        buffer == NULL  ||
+        (first + sectors)/USLOSS_DISK_TRACK_SIZE + track > ProcTable[diskPids[unit]].diskTrack) {
+        return -1;
+    }
+
+    procPtr driver = &ProcTable[diskPids[unit]];
+
+    //Retrieve the process
+
+    //If the process doesn't exist, initialize
+    if (ProcTable[getpid() % MAXPROC].pid == -1) {
+        initProc(getpid());
+    }
+    procPtr currProcess = &currProcessTable[getpid() % MAXPROC];
+
+    if (!write) {
+      currProcess->diskRequest.opr = USLOSS_DISK_READ;
+      currProcess->diskRequest.reg2 = buffer;
+      currProcess->diskTrack = track;
+      currProcess->diskFirstSec = first;
+      currProcess->diskSectors = sectors;
+      currProcess->diskBuffer = buffer;
+    } else {
+      currProcess->diskRequest.opr = USLOSS_DISK_WRITE;
+    }
+        
+    addDiskQ(&diskQs[unit], currProcess); // add to disk queue 
+    semvReal(driver->blockSem);  // wake up disk driver
+    sempReal(currProcess->blockSem); // block
+
+    int status;
+    int result = USLOSS_DeviceInput(USLOSS_DISK_DEV, unit, &status);
+
+    return result;
+}
+
+
+
+
+
+
+
+
+
+
+
+
+
 
