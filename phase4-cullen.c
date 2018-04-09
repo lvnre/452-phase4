@@ -658,12 +658,80 @@ int diskWriteOrReadReal(int unit, int track, int first, int sectors, void *buffe
     return result;
 }
 
+void diskSize(USLOSS_Sysargs * sysArgs) {
 
+  //Check which mode we are in
+  if (!isKernelMode()) {
+    USLOSS_Console("diskSize(): called while in user mode. Halting...\n");
+    USLOSS_Halt(1);
+  }
+  int unit = (long) sysArgs->arg1;
+  int sector, track, disk;
+  int val = diskSizeReal(unit, &sector, &track, &disk);
 
+  sysArgs->arg1 = (void *) ((long) sector);
+  sysArgs->arg2 = (void *) ((long) track);
+  sysArgs->arg3 = (void *) ((long) disk);
+  sysArgs->arg4 = (void *) ((long) val);
 
+  userModeOn();
+}
 
-int diskSizeReal(int unit, int *sector, int *track, int *disk){}
+int diskSizeReal(int unit, int *sector, int *track, int *disk) {
 
+  //Check which mode we are in
+  if (!isKernelMode()) {
+    USLOSS_Console("diskSizeReal(): called while in user mode. Halting...\n");
+    USLOSS_Halt(1);
+  }
+  
+  //Check illegal args
+  if (unit < 0 || unit > 1 ||
+      sector == NULL||
+      track == NULL || 
+      disk == NULL) {
+    
+    //return -1 if illegal arguments are passed in
+    return -1;
+  }
+
+  procPtr drivePtr = &procTable[diskPids[unit]];
+
+  // get the number of tracks for the first time
+  if (drivePtr->track == -1) {
+    
+    //initialize the process if the proc table entry is empty
+    if (procTable[getpid() % MAXPROC].pid == -1) {
+      procInit(getpid());
+    }
+
+    //store current proc
+    procPtr currProc = &procTable[getpid() % MAXPROC];
+
+    //populate the values of the current proc
+    currProc->track = 0;
+
+    //set request values for the current proc
+    USLOSS_DeviceRequest request;
+    request.opr = USLOSS_DISK_TRACKS;
+    request.reg1 = &drivePtr->diskTrack;
+    currProc->request = request;
+
+    //add to disk queue
+    addToDiskList(&disks[unit], currProc);
+    //unblock the drive ptr
+    semvReal(drivePtr->blockedSem); 
+    //block the current proc
+    sempReal(currProc->blockedSem);
+  }
+
+  *sector = USLOSS_DISK_SECTOR_SIZE;
+  *track = USLOSS_DISK_TRACK_SIZE;
+  *disk = drivePtr->track;
+
+  //return 0 if successful
+  return 0;
+}
 
 
 void termRead(systemArgs *sysArgs)
