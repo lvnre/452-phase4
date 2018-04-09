@@ -482,8 +482,87 @@ int diskReadOrWriteReal(int unit, int track, int first, int sectors, void *buffe
 }
 
 
+void diskSize(USLOSS_Sysargs * sysArgs) {
 
+    requireKernelMode("diskSize()");
 
+    int unit = (long) sysArgs->arg1;
+    int sector, track, disk;
+    int val = diskSizeReal(unit, &sector, &track, &disk);
+
+    sysArgs->arg1 = (void *) ((long) sector);
+    sysArgs->arg2 = (void *) ((long) track);
+    sysArgs->arg3 = (void *) ((long) disk);
+    sysArgs->arg4 = (void *) ((long) val);
+
+    setUserMode();
+}
+
+/*------------------------------------------------------------------------
+    diskSizeReal: Puts values into pointers for the size of a sector, 
+    number of sectors per track, and number of tracks on the disk for the 
+    given unit. 
+
+    Routine: diskSizeReal()
+
+    Purpose: takes the pointers given as parameters and assigns them to
+             values specifying the number of tracks on the disk as well as the 
+             number of sector per track
+
+    Returns: 0 if successful, -1 if invalid arguments are passed in
+ ------------------------------------------------------------------------*/
+int diskSizeReal(int unit, int *sector, int *track, int *disk) {
+
+    requireKernelMode("diskSizeReal()");
+
+  
+    //Illegal argument check
+    if (unit < 0 || unit > 1 ||
+        sector == NULL||
+        track == NULL || 
+        disk == NULL) {
+        
+        //return -1 if illegal arguments are passed in
+        return -1;
+    }
+
+    procPtr drivePtr = &ProcTable[diskPids[unit]];
+
+    // get the number of tracks for the first time
+    if (drivePtr->diskTrack == -1) {
+    
+        //initialize the process if the proc table entry is empty
+        if (ProcTable[getpid() % MAXPROC].pid == -1) {
+            initProc(getpid());
+        }
+
+        //store current proc
+        procPtr currProc = &ProcTable[getpid() % MAXPROC];
+
+        //populate the values of the current proc
+        currProc->diskTrack = 0;
+
+        //set request values for the current proc
+        USLOSS_DeviceRequest request;
+        request.opr = USLOSS_DISK_TRACKS;
+        request.reg1 = &drivePtr->diskTrack;
+        currProc->diskRequest = request;
+
+        //add to disk queue
+        addDiskQ(&diskQs[unit], currProc);
+        //unblock the drive ptr
+        semvReal(drivePtr->blockSem); 
+        //block the current proc
+        sempReal(currProc->blockSem);
+    }
+
+    *sector = USLOSS_DISK_SECTOR_SIZE;
+    *track = USLOSS_DISK_TRACK_SIZE;
+    *disk = drivePtr->diskTrack;
+
+    //return 0 if successful
+    return 0;
+}
 
 
 
