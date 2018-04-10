@@ -1,5 +1,5 @@
-typedef struct proc proc;
-typedef struct proc * procPtr;
+typedef struct procStructure procStructure;
+typedef struct procStructure * procStructPtr;
 typedef struct diskList diskList;
 typedef struct pQueue pQueue;
 
@@ -17,21 +17,21 @@ union psrValues {
 };
 
 struct diskList {
-  procPtr head;
-  procPtr tail;
+  procStructPtr head;
+  procStructPtr tail;
   int     length;
   int     type;
-  procPtr current;
+  procStructPtr current;
 };
 
-struct proc {
+struct procStructure {
   int                  pid;
   int 		       mboxID; 
   int                  blockedSem;
   int		       time;
   void 		       *diskBuffer;
-  procPtr 	       prevDisk;
-  procPtr 	       nextDisk;
+  procStructPtr 	       prevDisk;
+  procStructPtr 	       nextDisk;
   int 		       track;
   int 		       firstSector;
   int 		       sectors;
@@ -39,7 +39,7 @@ struct proc {
 };
 
 struct pQueue {
-  procPtr processes[MAXPROC];
+  procStructPtr processes[MAXPROC];
   int size;
 };
 

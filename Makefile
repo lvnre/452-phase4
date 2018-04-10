@@ -5,7 +5,7 @@ ASSIGNMENT = 452phase4
 CC = gcc
 AR = ar
 
-COBJS = phase4-cullen.o libuserP4.o 
+COBJS = phase4.o libuserP4.o 
 CSRCS = ${COBJS:.o=.c}
 
 PHASE1LIB = patrickphase1
@@ -52,7 +52,7 @@ clean:
 	rm -f $(COBJS) $(TARGET) test*.o test*.txt term* $(TESTS) \
 		libuser.o p1.o core
 
-phase4.o:	libuser.h libuserP4.h phase1.h phase2.h phase3.h phase4.h providedPrototypes.h phase4-structs.h
+phase4.o:	libuser.h phase1.h phase2.h phase3.h phase4.h providedPrototypes.h phase4-structs.h
 
 submit: $(CSRCS) $(HDRS) Makefile
 	tar cvzf phase3.tgz $(CSRCS) $(HDRS) Makefile
