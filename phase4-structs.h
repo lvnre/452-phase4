@@ -30,8 +30,8 @@ struct procStructure {
   int                  blockedSem;
   int		       time;
   void 		       *diskBuffer;
-  procStructPtr 	       prevDisk;
-  procStructPtr 	       nextDisk;
+  procStructPtr        prevDisk;
+  procStructPtr        nextDisk;
   int 		       track;
   int 		       firstSector;
   int 		       sectors;

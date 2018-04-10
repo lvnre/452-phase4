@@ -557,20 +557,19 @@ int sleepReal(int procSeconds) {
   }
   //Get the current process
   procStructPtr currProc;
-  currProc = &ProcStructTable[getpid() % MAXPROC];
+  int index = getpid()%MAXPROC;
+  currProc = &ProcStructTable[index];
 
 
   int time;
   gettimeofdayReal(&time);
   //set time for the current process
 
-  currProc->time = time + procSeconds*1000;
+  currProc->time = time + procSeconds;
 
   //add the current process to the sleeping priority queue
   addToSleepingQ(&sleeping, currProc);
 
-  //block the current process
-  sempReal(currProc->blockedSem);
   return 0;
 }
 
@@ -892,7 +891,6 @@ void userModeOn()
 
 void procInit(int pid)
 {
-  printf("pid = %d\n", pid);
   int i = pid % MAXPROC;
   ProcStructTable[i].pid = pid;
   ProcStructTable[i].mboxID = MboxCreate(0,0);
@@ -901,6 +899,10 @@ void procInit(int pid)
   ProcStructTable[i].prevDisk = NULL;
   ProcStructTable[i].nextDisk = NULL;
   ProcStructTable[i].track = -1;
+  ProcStructTable[i].firstSector = -1;
+  ProcStructTable[i].sectors = -1;
+  ProcStructTable[i].diskBuffer = NULL;
+  
 }
 
 void enableInterrupts()

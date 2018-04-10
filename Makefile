@@ -5,7 +5,7 @@ ASSIGNMENT = 452phase4
 CC = gcc
 AR = ar
 
-COBJS = phase4.o libuserP4.o 
+COBJS = phase4-cullen.o libuserP4.o 
 CSRCS = ${COBJS:.o=.c}
 
 PHASE1LIB = patrickphase1

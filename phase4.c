@@ -2,7 +2,7 @@
 #include <usyscall.h>
 #include <providedPrototypes.h>
 #include <phase1.h>
-#include <phase4-structs.h>clear
+#include <phase4-structs.h>
 #include <phase2.h>
 #include <phase3.h>
 #include <phase4.h>
@@ -13,7 +13,6 @@
 
 
 int  semRunning;
-
 int  ClockDriver(char *);
 int  DiskDriver(char *);
 int  TermDriver(char *);
@@ -221,7 +220,7 @@ start3(void)
     int num = 0;
     //Enable recv interrupts
     num = USLOSS_TERM_CTRL_RECV_INT(num);
-    USLOSS_DeviceOutput(USLOSS_TERM_DEV, i, (void *)((long)num));
+    int x = USLOSS_DeviceOutput(USLOSS_TERM_DEV, i, (void *)((long)num));
 
     //Write to the term*.in file
     sprintf(file, "term%d.in", i);
@@ -892,7 +891,6 @@ void userModeOn()
 
 void procInit(int pid)
 {
-  printf("pid = %d\n", pid);
   int i = pid % MAXPROC;
   ProcStructTable[i].pid = pid;
   ProcStructTable[i].mboxID = MboxCreate(0,0);
@@ -910,7 +908,7 @@ void enableInterrupts()
 
 procStructPtr topSleepingQ(pQueue *q)
 {
-  return &q->processes[0];
+  return q->processes[0];
 }
 
 void addToSleepingQ(pQueue *q, procStructPtr new)
