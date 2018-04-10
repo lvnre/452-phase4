@@ -499,10 +499,6 @@ void diskSize(USLOSS_Sysargs * sysArgs) {
 }
 
 /*------------------------------------------------------------------------
-    diskSizeReal: Puts values into pointers for the size of a sector, 
-    number of sectors per track, and number of tracks on the disk for the 
-    given unit. 
-
     Routine: diskSizeReal()
 
     Purpose: takes the pointers given as parameters and assigns them to
